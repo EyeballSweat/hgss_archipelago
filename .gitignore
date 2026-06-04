@@ -229,3 +229,7 @@ Thumbs.db
 
 # Pokemon HGSS local memory research dumps
 memory_dumps/
+**/memory_dumps/
+
+# Pokemon HGSS local memory research output
+memory_research_output/
