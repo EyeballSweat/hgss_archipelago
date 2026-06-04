@@ -42,3 +42,7 @@ jobs:
       - name: Check Pokemon HGSS memory research helper imports
         run: |
           python -m worlds.pokemon_hgss.MemoryResearch --help
+
+      - name: Check Pokemon HGSS memory candidate helper imports
+        run: |
+          python -m worlds.pokemon_hgss.MemoryCandidates --help
