@@ -22,6 +22,10 @@ from .Rules import (
     ENTRANCE_RULES,
     LOCATION_RULES,
 )
+from .MemoryMap import (
+    EVENT_FLAG_TABLE,
+    get_mapped_event_keys,
+)
 
 
 def get_duplicates(values) -> list:
@@ -93,6 +97,8 @@ def get_event_item_count() -> int:
 def get_game_check_count() -> int:
     return len(GAME_CHECKS)
 
+def get_event_flag_count() -> int:
+    return len(EVENT_FLAG_TABLE)
 
 def validate_item_data(errors: list[str]) -> None:
     item_codes = [
@@ -271,6 +277,24 @@ def validate_game_check_data(errors: list[str]) -> None:
             "This usually means duplicate event keys exist."
         )
 
+    memory_mapped_event_keys = get_mapped_event_keys()
+    game_check_event_keys = set(event_keys)
+
+    missing_memory_mappings = game_check_event_keys - memory_mapped_event_keys
+    extra_memory_mappings = memory_mapped_event_keys - game_check_event_keys
+
+    for event_key in sorted(missing_memory_mappings):
+        errors.append(
+            "Game check event key has no memory map placeholder: "
+            f"{event_key}"
+        )
+
+    for event_key in sorted(extra_memory_mappings):
+        errors.append(
+            "Memory map contains event key that is not in GAME_CHECKS: "
+            f"{event_key}"
+        )
+
 
 def validate_item_pool_size(errors: list[str]) -> None:
     normal_location_count = get_normal_location_count()
@@ -317,6 +341,7 @@ def print_validation_summary() -> None:
     print(f"Filler item types: {get_filler_item_count()}")
     print(f"Event item types: {get_event_item_count()}")
     print(f"Game checks: {get_game_check_count()}")
+    print(f"Event flag placeholders: {get_event_flag_count()}")
     print(f"Regions: {len(REGION_ORDER)}")
     print(f"Entrances: {len(REGION_CONNECTIONS)}")
     print(f"Location rules: {len(LOCATION_RULES)}")
