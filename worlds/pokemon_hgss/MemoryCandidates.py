@@ -65,6 +65,15 @@ def read_candidate_csv(csv_path: Path) -> set[BitCandidate]:
     return candidates
 
 
+def read_excluded_candidates(exclude_csv_paths: list[Path]) -> set[BitCandidate]:
+    excluded_candidates: set[BitCandidate] = set()
+
+    for csv_path in exclude_csv_paths:
+        excluded_candidates.update(read_candidate_csv(csv_path))
+
+    return excluded_candidates
+
+
 def collect_candidate_counts(
     csv_paths: list[Path],
 ) -> tuple[Counter[BitCandidate], dict[BitCandidate, list[Path]]]:
@@ -86,6 +95,7 @@ def filter_candidates(
     file_count: int,
     min_count: int,
     common_only: bool,
+    excluded_candidates: set[BitCandidate],
 ) -> list[tuple[BitCandidate, int]]:
     required_count = file_count if common_only else min_count
 
@@ -93,6 +103,7 @@ def filter_candidates(
         (candidate, count)
         for candidate, count in candidate_counts.items()
         if count >= required_count
+        and candidate not in excluded_candidates
     ]
 
     return sorted(
@@ -168,6 +179,7 @@ def write_candidates_csv(
 
 def compare_candidate_csvs(
     csv_paths: list[Path],
+    exclude_csv_paths: list[Path],
     min_count: int,
     common_only: bool,
     max_results: int,
@@ -180,17 +192,21 @@ def compare_candidate_csvs(
         raise ValueError("--min-count must be at least 1.")
 
     candidate_counts, _candidate_sources = collect_candidate_counts(csv_paths)
+    excluded_candidates = read_excluded_candidates(exclude_csv_paths)
 
     candidates = filter_candidates(
         candidate_counts=candidate_counts,
         file_count=len(csv_paths),
         min_count=min_count,
         common_only=common_only,
+        excluded_candidates=excluded_candidates,
     )
 
     print("Pokemon HGSS memory candidate helper")
     print(f"Input CSV files: {len(csv_paths)}")
     print(f"Unique candidate bits: {len(candidate_counts)}")
+    print(f"Exclude CSV files: {len(exclude_csv_paths)}")
+    print(f"Excluded candidate bits: {len(excluded_candidates)}")
 
     if common_only:
         print("Filter: candidates appearing in every file")
@@ -224,6 +240,17 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         type=Path,
         help="CSV files produced by MemoryResearch.py --output-csv.",
+    )
+
+    parser.add_argument(
+        "--exclude-csv",
+        action="append",
+        default=[],
+        type=Path,
+        help=(
+            "CSV file containing candidates to exclude from the results. "
+            "Can be used multiple times."
+        ),
     )
 
     parser.add_argument(
@@ -262,6 +289,7 @@ def main() -> None:
 
     compare_candidate_csvs(
         csv_paths=args.csv_files,
+        exclude_csv_paths=args.exclude_csv,
         min_count=args.min_count,
         common_only=args.common_only,
         max_results=args.max_results,
