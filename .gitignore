@@ -226,3 +226,6 @@ Thumbs.db
 
 # HGSS AP output
 *.aphgss
+
+# Pokemon HGSS local memory research dumps
+memory_dumps/
