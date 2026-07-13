@@ -19,7 +19,7 @@ local OUTPUT_DIRECTORY = "hgss_bridge_state"
 local OUTPUT_FILENAME = "hgss_bridge_state.json"
 
 -- Write bridge state every N frames.
-local WRITE_EVERY_FRAMES = 30
+local WRITE_EVERY_FRAMES = 120
 
 -- ============================================================
 -- WATCHED EVENTS
