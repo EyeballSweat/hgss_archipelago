@@ -25,6 +25,7 @@ from .Rules import (
 from .MemoryMap import (
     EVENT_FLAG_TABLE,
     get_mapped_event_keys,
+    get_memory_mapped_event_keys,
 )
 
 
@@ -99,6 +100,9 @@ def get_game_check_count() -> int:
 
 def get_event_flag_count() -> int:
     return len(EVENT_FLAG_TABLE)
+
+def get_memory_mapped_event_flag_count() -> int:
+    return len(get_memory_mapped_event_keys())
 
 def validate_item_data(errors: list[str]) -> None:
     item_codes = [
@@ -295,6 +299,50 @@ def validate_game_check_data(errors: list[str]) -> None:
             f"{event_key}"
         )
 
+def validate_memory_map_data(errors: list[str]) -> None:
+    event_keys = [
+        event_flag.event_key
+        for event_flag in EVENT_FLAG_TABLE
+    ]
+
+    duplicate_event_keys = get_duplicates(event_keys)
+
+    for event_key in duplicate_event_keys:
+        errors.append(f"Duplicate memory map event key found: {event_key}")
+
+    for event_flag in EVENT_FLAG_TABLE:
+        if event_flag.address is None and event_flag.bit_mask is not None:
+            errors.append(
+                "Memory map event has bit_mask but no address: "
+                f"{event_flag.event_key}"
+            )
+
+        if event_flag.address is not None and event_flag.bit_mask is None:
+            errors.append(
+                "Memory map event has address but no bit_mask: "
+                f"{event_flag.event_key}"
+            )
+
+        for requirement in event_flag.memory_requirements:
+            if requirement.address < 0:
+                errors.append(
+                    "Memory map requirement has negative address: "
+                    f"{event_flag.event_key}"
+                )
+
+            if requirement.bit_mask <= 0 or requirement.bit_mask > 0xFF:
+                errors.append(
+                    "Memory map requirement has invalid bit mask: "
+                    f"{event_flag.event_key} "
+                    f"0x{requirement.bit_mask:02X}"
+                )
+
+            if requirement.bit_mask & (requirement.bit_mask - 1) != 0:
+                errors.append(
+                    "Memory map requirement should use a single-bit mask: "
+                    f"{event_flag.event_key} "
+                    f"0x{requirement.bit_mask:02X}"
+                )
 
 def validate_item_pool_size(errors: list[str]) -> None:
     normal_location_count = get_normal_location_count()
@@ -328,6 +376,7 @@ def validate_hgss_data() -> None:
     validate_region_data(errors)
     validate_rule_data(errors)
     validate_game_check_data(errors)
+    validate_memory_map_data(errors)
     validate_item_pool_size(errors)
 
     raise_validation_errors(errors)
@@ -342,6 +391,7 @@ def print_validation_summary() -> None:
     print(f"Event item types: {get_event_item_count()}")
     print(f"Game checks: {get_game_check_count()}")
     print(f"Event flag placeholders: {get_event_flag_count()}")
+    print(f"Memory mapped event flags: {get_memory_mapped_event_flag_count()}")
     print(f"Regions: {len(REGION_ORDER)}")
     print(f"Entrances: {len(REGION_CONNECTIONS)}")
     print(f"Location rules: {len(LOCATION_RULES)}")
