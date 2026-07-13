@@ -21,7 +21,8 @@ from .Items import GAME_NAME
 from .LocationTracker import LocationTracker
 from .ReceivedItemTracker import ReceivedItemTracker
 from .GameInterface import SimulatedHGSSInterface
-from .GameChecks import get_event_key_for_location_name, get_location_name_for_event_key
+from .GameChecks import get_location_name_for_event_key
+from .MemoryMap import get_memory_mapped_event_keys, is_event_set_in_memory
 
 
 EXPECTED_FORMAT_VERSION = 1
@@ -118,6 +119,52 @@ def print_aphgss_summary(data: dict[str, Any]) -> None:
             f"{location_data['item_name']}"
         )
 
+# -------------------------
+# Memory dump event scanning
+# -------------------------
+
+def read_memory_dump_file(file_path: Path) -> bytes:
+    if not file_path.exists():
+        raise FileNotFoundError(f"Could not find memory dump: {file_path}")
+
+    return file_path.read_bytes()
+
+
+def get_completed_event_keys_from_memory_dump(memory_dump_path: Path) -> set[str]:
+    memory_data = read_memory_dump_file(memory_dump_path)
+    completed_event_keys: set[str] = set()
+
+    for event_key in sorted(get_memory_mapped_event_keys()):
+        if is_event_set_in_memory(
+            event_key=event_key,
+            memory_data=memory_data,
+        ):
+            completed_event_keys.add(event_key)
+
+    return completed_event_keys
+
+
+def print_memory_dump_event_preview(memory_dump_paths: list[Path]) -> None:
+    print()
+    print("Scanning HGSS memory dumps without sending AP checks.")
+
+    for memory_dump_path in memory_dump_paths:
+        completed_event_keys = get_completed_event_keys_from_memory_dump(
+            memory_dump_path
+        )
+
+        print()
+        print(f"Memory dump: {memory_dump_path}")
+        print(f"Detected mapped HGSS events: {len(completed_event_keys)}")
+
+        for event_key in sorted(completed_event_keys):
+            location_name = get_location_name_for_event_key(event_key)
+
+            print(
+                "- "
+                f"{event_key} -> "
+                f"{location_name or 'unknown AP location'}"
+            )
 
 # -------------------------
 # Archipelago client
@@ -148,6 +195,14 @@ class PokemonHGSSCommandProcessor(ClientCommandProcessor):
                 "Tracked checked locations: "
                 f"{len(ctx.location_tracker.checked_location_ids)}"
             )
+            self.output(
+                "Memory dumps queued: "
+                f"{len(ctx.memory_dump_paths)}"
+            )
+            self.output(
+                "Memory dumps scanned: "
+                f"{len(ctx.scanned_memory_dump_paths)}"
+            )
 
 
 class PokemonHGSSContext(CommonContext):
@@ -163,6 +218,8 @@ class PokemonHGSSContext(CommonContext):
         test_check_names: list[str] | None = None,
         simulated_location_names: list[str] | None = None,
         simulation_delay: float = 2.0,
+        memory_dump_paths: list[Path] | None = None,
+        memory_dump_delay: float = 2.0,
     ) -> None:
         super().__init__(server_address, password)
 
@@ -187,6 +244,11 @@ class PokemonHGSSContext(CommonContext):
         )
 
         self.watcher_seen_event_keys: set[str] = set()
+
+        self.memory_dump_paths = memory_dump_paths or []
+        self.memory_dump_delay = memory_dump_delay
+        self.scanned_memory_dump_paths: set[Path] = set()
+        self.memory_dump_next_scan_time: float | None = None
 
         if self.aphgss_data:
             self.auth = str(self.aphgss_data["player_name"])
@@ -246,6 +308,50 @@ class PokemonHGSSContext(CommonContext):
     async def send_test_location_checks(self) -> None:
         for location_name in self.test_check_names:
             await self.send_location_check_by_name(location_name)
+
+    def get_completed_event_keys_from_memory_dumps(self) -> set[str]:
+        if not self.memory_dump_paths:
+            return set()
+
+        unscanned_memory_dump_paths = [
+            memory_dump_path
+            for memory_dump_path in self.memory_dump_paths
+            if memory_dump_path not in self.scanned_memory_dump_paths
+        ]
+
+        if not unscanned_memory_dump_paths:
+            return set()
+
+        current_time = asyncio.get_running_loop().time()
+
+        if self.memory_dump_next_scan_time is None:
+            self.memory_dump_next_scan_time = (
+                current_time + self.memory_dump_delay
+            )
+
+        if current_time < self.memory_dump_next_scan_time:
+            return set()
+
+        memory_dump_path = unscanned_memory_dump_paths[0]
+        self.scanned_memory_dump_paths.add(memory_dump_path)
+        self.memory_dump_next_scan_time = current_time + self.memory_dump_delay
+
+        print()
+        print(f"Scanning HGSS memory dump: {memory_dump_path}")
+
+        completed_event_keys = get_completed_event_keys_from_memory_dump(
+            memory_dump_path
+        )
+
+        print(
+            "Detected mapped HGSS events in memory dump: "
+            f"{len(completed_event_keys)}"
+        )
+
+        for event_key in sorted(completed_event_keys):
+            print(f"- {event_key}")
+
+        return completed_event_keys
 
     def on_package(self, cmd: str, args: dict[str, Any]) -> None:
         if cmd == "Connected":
@@ -314,8 +420,12 @@ async def game_watcher(ctx: PokemonHGSSContext) -> None:
             await asyncio.sleep(1)
             continue
 
-        completed_event_keys = (
+        completed_event_keys = set(
             ctx.game_interface.get_completed_event_keys()
+        )
+
+        completed_event_keys.update(
+            ctx.get_completed_event_keys_from_memory_dumps()
         )
 
         for event_key in completed_event_keys:
@@ -361,12 +471,14 @@ async def run_client(args) -> None:
         )
 
     ctx = PokemonHGSSContext(
-        args.connect,
-        args.password,
-        aphgss_data,
-        args.test_check,
-        args.simulate_event,
-        args.simulation_delay,
+        server_address=args.connect,
+        password=args.password,
+        aphgss_data=aphgss_data,
+        test_check_names=args.test_check,
+        simulated_location_names=args.simulate_event,
+        simulation_delay=args.simulation_delay,
+        memory_dump_paths=args.memory_dump,
+        memory_dump_delay=args.memory_dump_delay,
     )
 
     if not args.connect:
@@ -378,6 +490,10 @@ async def run_client(args) -> None:
             "To connect later, use something like: "
             "py -3.13 -m worlds.pokemon_hgss.Client --connect localhost:38281"
         )
+
+        if args.memory_dump:
+            print_memory_dump_event_preview(args.memory_dump)
+
         return
 
     ctx.server_task = asyncio.create_task(
@@ -448,7 +564,27 @@ def main() -> None:
         default=2.0,
         help=(
             "Seconds between simulated completed locations. "
-            "Only used with --simulate-check."
+            "Only used with --simulate-event."
+        ),
+    )
+
+    parser.add_argument(
+        "--memory-dump",
+        action="append",
+        type=Path,
+        default=[],
+        help=(
+            "Development only: scan a HGSS Main RAM memory dump for mapped "
+            "events. Can be used multiple times."
+        ),
+    )
+
+    parser.add_argument(
+        "--memory-dump-delay",
+        type=float,
+        default=2.0,
+        help=(
+            "Seconds between scanning queued memory dumps while connected."
         ),
     )
 
