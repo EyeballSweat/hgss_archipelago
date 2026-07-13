@@ -23,6 +23,7 @@ from .ReceivedItemTracker import ReceivedItemTracker
 from .GameInterface import SimulatedHGSSInterface
 from .GameChecks import get_location_name_for_event_key
 from .MemoryMap import get_memory_mapped_event_keys, is_event_set_in_memory
+from .MemoryBridge import get_completed_event_keys_from_bridge_state
 
 
 EXPECTED_FORMAT_VERSION = 1
@@ -166,6 +167,27 @@ def print_memory_dump_event_preview(memory_dump_paths: list[Path]) -> None:
                 f"{location_name or 'unknown AP location'}"
             )
 
+def print_bridge_state_event_preview(bridge_state_path: Path) -> None:
+    print()
+    print("Scanning HGSS bridge state without sending AP checks.")
+
+    completed_event_keys = get_completed_event_keys_from_bridge_state(
+        bridge_state_path
+    )
+
+    print()
+    print(f"Bridge state: {bridge_state_path}")
+    print(f"Detected mapped HGSS events: {len(completed_event_keys)}")
+
+    for event_key in sorted(completed_event_keys):
+        location_name = get_location_name_for_event_key(event_key)
+
+        print(
+            "- "
+            f"{event_key} -> "
+            f"{location_name or 'unknown AP location'}"
+        )
+
 # -------------------------
 # Archipelago client
 # -------------------------
@@ -203,6 +225,10 @@ class PokemonHGSSCommandProcessor(ClientCommandProcessor):
                 "Memory dumps scanned: "
                 f"{len(ctx.scanned_memory_dump_paths)}"
             )
+            self.output(
+                "Bridge state path: "
+                f"{ctx.bridge_state_path or 'not set'}"
+            )
 
 
 class PokemonHGSSContext(CommonContext):
@@ -220,6 +246,8 @@ class PokemonHGSSContext(CommonContext):
         simulation_delay: float = 2.0,
         memory_dump_paths: list[Path] | None = None,
         memory_dump_delay: float = 2.0,
+        bridge_state_path: Path | None = None,
+        bridge_state_delay: float = 1.0,
     ) -> None:
         super().__init__(server_address, password)
 
@@ -244,11 +272,14 @@ class PokemonHGSSContext(CommonContext):
         )
 
         self.watcher_seen_event_keys: set[str] = set()
-
         self.memory_dump_paths = memory_dump_paths or []
         self.memory_dump_delay = memory_dump_delay
         self.scanned_memory_dump_paths: set[Path] = set()
         self.memory_dump_next_scan_time: float | None = None
+        self.bridge_state_path = bridge_state_path
+        self.bridge_state_delay = bridge_state_delay
+        self.bridge_state_next_scan_time: float | None = None
+        self.bridge_state_warning_printed = False
 
         if self.aphgss_data:
             self.auth = str(self.aphgss_data["player_name"])
@@ -353,6 +384,43 @@ class PokemonHGSSContext(CommonContext):
 
         return completed_event_keys
 
+    def get_completed_event_keys_from_bridge_state(self) -> set[str]:
+        if self.bridge_state_path is None:
+            return set()
+
+        current_time = asyncio.get_running_loop().time()
+
+        if self.bridge_state_next_scan_time is None:
+            self.bridge_state_next_scan_time = current_time
+
+        if current_time < self.bridge_state_next_scan_time:
+            return set()
+
+        self.bridge_state_next_scan_time = (
+            current_time + self.bridge_state_delay
+        )
+
+        try:
+            return get_completed_event_keys_from_bridge_state(
+                self.bridge_state_path
+            )
+        except FileNotFoundError:
+            if not self.bridge_state_warning_printed:
+                self.bridge_state_warning_printed = True
+                print(
+                    "HGSS bridge state file not found yet: "
+                    f"{self.bridge_state_path}"
+                )
+
+            return set()
+        except Exception as error:
+            print(
+                "Could not read HGSS bridge state file: "
+                f"{self.bridge_state_path}"
+            )
+            print(f"Reason: {error}")
+            return set()
+
     def on_package(self, cmd: str, args: dict[str, Any]) -> None:
         if cmd == "Connected":
             self.slot_data = args.get("slot_data", {})
@@ -428,6 +496,10 @@ async def game_watcher(ctx: PokemonHGSSContext) -> None:
             ctx.get_completed_event_keys_from_memory_dumps()
         )
 
+        completed_event_keys.update(
+            ctx.get_completed_event_keys_from_bridge_state()
+        )
+
         for event_key in completed_event_keys:
             if event_key in ctx.watcher_seen_event_keys:
                 continue
@@ -479,6 +551,8 @@ async def run_client(args) -> None:
         simulation_delay=args.simulation_delay,
         memory_dump_paths=args.memory_dump,
         memory_dump_delay=args.memory_dump_delay,
+        bridge_state_path=args.bridge_state,
+        bridge_state_delay=args.bridge_state_delay,
     )
 
     if not args.connect:
@@ -493,6 +567,9 @@ async def run_client(args) -> None:
 
         if args.memory_dump:
             print_memory_dump_event_preview(args.memory_dump)
+
+        if args.bridge_state:
+            print_bridge_state_event_preview(args.bridge_state)
 
         return
 
@@ -585,6 +662,25 @@ def main() -> None:
         default=2.0,
         help=(
             "Seconds between scanning queued memory dumps while connected."
+        ),
+    )
+
+    parser.add_argument(
+        "--bridge-state",
+        type=Path,
+        default=None,
+        help=(
+            "Development only: watch a HGSS BizHawk bridge state JSON file "
+            "for mapped events."
+        ),
+    )
+
+    parser.add_argument(
+        "--bridge-state-delay",
+        type=float,
+        default=1.0,
+        help=(
+            "Seconds between bridge state scans while connected."
         ),
     )
 
