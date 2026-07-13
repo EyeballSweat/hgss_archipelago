@@ -4,31 +4,69 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class MemoryBitRequirement:
+    address: int
+    bit_mask: int
+    notes: str
+
+
+@dataclass(frozen=True)
 class EventFlagData:
     event_key: str
     address: int | None
     bit_mask: int | None
     notes: str
+    additional_requirements: tuple[MemoryBitRequirement, ...] = ()
+
+    @property
+    def memory_requirements(self) -> tuple[MemoryBitRequirement, ...]:
+        requirements: list[MemoryBitRequirement] = []
+
+        if self.address is not None and self.bit_mask is not None:
+            requirements.append(
+                MemoryBitRequirement(
+                    address=self.address,
+                    bit_mask=self.bit_mask,
+                    notes="Primary memory requirement.",
+                )
+            )
+
+        requirements.extend(self.additional_requirements)
+
+        return tuple(requirements)
+
+    @property
+    def is_memory_mapped(self) -> bool:
+        return bool(self.memory_requirements)
 
 
-# These are placeholders for now.
+# Main RAM offsets are BizHawk domain offsets, not Nintendo DS absolute addresses.
 #
-# Later, when we start researching HGSS memory/save flags, each event key will
-# get a real RAM/save address and bit mask.
+# Most entries are placeholders for now.
 #
-# Example future shape:
-# EventFlagData(
-#     event_key="defeated_falkner",
-#     address=0x021XXXXX,
-#     bit_mask=0x04,
-#     notes="Set after Falkner battle reward sequence.",
-# )
+# The received_starter mapping is tentative. It was found through repeated
+# Main RAM diffing and probing:
+# - clear before receiving a starter
+# - clear after cancelling starter selection
+# - set after choosing each of the three starters
+# - remains set after walking around
+# - remains set after save/reload
+#
+# Because this is still research-derived and not an official event flag, it
+# currently requires two independent candidate bits to reduce false positives.
 EVENT_FLAG_TABLE = (
     EventFlagData(
         "received_starter",
-        None,
-        None,
-        "TODO: Find flag set after receiving the starter Pokemon.",
+        0x00110B40,
+        0x02,
+        "Tentative Main RAM mapping for receiving any starter Pokemon.",
+        (
+            MemoryBitRequirement(
+                0x00110B46,
+                0x04,
+                "Second required candidate bit for received_starter.",
+            ),
+        ),
     ),
     EventFlagData(
         "received_pokegear",
@@ -260,4 +298,45 @@ def get_flag_data_for_event_key(event_key: str) -> EventFlagData | None:
 
 
 def get_mapped_event_keys() -> set[str]:
+    """Return every known event key.
+
+    This keeps the old behaviour of this helper. Other validation code may use
+    it to check that every GameChecks event has a MemoryMap entry, even if the
+    memory address is still TODO.
+    """
+
     return set(event_key_to_flag_data)
+
+
+def get_memory_mapped_event_keys() -> set[str]:
+    return {
+        event_key
+        for event_key, event_flag in event_key_to_flag_data.items()
+        if event_flag.is_memory_mapped
+    }
+
+
+def is_event_set_in_memory(event_key: str, memory_data: bytes) -> bool:
+    event_flag = get_flag_data_for_event_key(event_key)
+
+    if event_flag is None:
+        raise KeyError(f"Unknown event key: {event_key}")
+
+    if not event_flag.is_memory_mapped:
+        return False
+
+    for requirement in event_flag.memory_requirements:
+        if requirement.address >= len(memory_data):
+            raise ValueError(
+                "Memory requirement is outside the supplied memory data. "
+                f"Event key: {event_key}, "
+                f"address: 0x{requirement.address:08X}, "
+                f"memory size: {len(memory_data)}"
+            )
+
+        byte_value = memory_data[requirement.address]
+
+        if byte_value & requirement.bit_mask != requirement.bit_mask:
+            return False
+
+    return True
