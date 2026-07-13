@@ -184,6 +184,20 @@ def get_bridge_event_states(data: dict[str, Any]) -> list[BridgeEventState]:
         for event_key, event_data in sorted(event_states.items())
     ]
 
+def get_completed_event_keys_from_bridge_state(
+    bridge_state_path: Path,
+) -> set[str]:
+    data = load_bridge_state_file(bridge_state_path)
+    validate_bridge_state_data(data)
+
+    bridge_event_states = get_bridge_event_states(data)
+
+    return {
+        event_state.event_key
+        for event_state in bridge_event_states
+        if event_state.is_set
+    }
+
 
 def print_bridge_summary(
     bridge_state_path: Path,
