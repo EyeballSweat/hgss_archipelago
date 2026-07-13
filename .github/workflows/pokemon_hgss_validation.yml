@@ -54,3 +54,7 @@ jobs:
       - name: Check Pokemon HGSS memory event scanner imports
         run: |
           python -m worlds.pokemon_hgss.MemoryEvents --help
+
+      - name: Check Pokemon HGSS memory bridge helper imports
+        run: |
+          python -m worlds.pokemon_hgss.MemoryBridge --help

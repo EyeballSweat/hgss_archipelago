@@ -233,3 +233,7 @@ memory_dumps/
 
 # Pokemon HGSS local memory research output
 memory_research_output/
+
+# Pokemon HGSS memory bridge
+hgss_bridge_state/
+**/hgss_bridge_state/
