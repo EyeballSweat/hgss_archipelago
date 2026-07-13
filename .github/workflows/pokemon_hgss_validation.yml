@@ -50,3 +50,7 @@ jobs:
       - name: Check Pokemon HGSS memory probe helper imports
         run: |
           python -m worlds.pokemon_hgss.MemoryProbe --help
+
+      - name: Check Pokemon HGSS memory event scanner imports
+        run: |
+          python -m worlds.pokemon_hgss.MemoryEvents --help
